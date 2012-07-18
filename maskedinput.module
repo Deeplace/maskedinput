@@ -1,0 +1,340 @@
+<?php
+
+define('CONVERT_FORWARD', 0);
+define('CONVERT_REVERSE', 1);
+
+/*
+ * Load required JS/CSS components
+ */
+function maskedinput_js_load() {
+  static $init = 0;
+  if(!$init) {
+    $init = 1;
+    $path = drupal_get_path('module', 'maskedinput');
+    drupal_add_js($path . '/js/jquery.maskedinput.js');
+    drupal_add_js("{$path}/js/maskedinput_init.js");
+  }
+}
+
+/*
+ * Implementation of hook_element_info()
+*/
+function maskedinput_element_info() {
+  $types['maskedinput'] = array(
+    '#input' => TRUE,
+    '#mask' => NULL,
+    '#convert_format' => NULL, //basename of function callbacks to convert input value to/from something expected, like datetime_dmy for maskedinput_convert_datetime_dmy_rev and maskedinput_convert_datetime_dmy_fwd
+    '#element_validate' => array('maskedinput_validate'),
+    '#validate_message' => 'Value does not match requested format.', // Message shown if format is not respected
+    '#filter' => NULL,  // one of { 'num', 'money', 'word', 'phone', 'email', 'date', 'datetime' } used to RegExp validate input value
+    '#theme' => array('maskedinput'),
+    '#theme_wrappers' => array('form_element'),
+    '#default_value' => NULL,
+    '#autocomplete_path' => NULL,
+  );
+
+  return $types;
+}
+
+
+/**
+ * Internal mask validate method.
+ */
+function _maskedinput_validate($mask, $value) {
+  $mask_list = array(
+    '9' => "[[:digit:]]",
+    'a' => "[[:alpha:]]",
+    '*' => "[[:alnum:].,/\ ]"
+  );
+
+  if (isset($value) && strlen($value) && $mask) {
+    $regexp = '&^' . strtr($mask, $mask_list) . '$&';
+    if (!preg_match($regexp, $value)) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+/**
+ * Implementation of hook_validate().
+ */
+function maskedinput_validate($element, $form, &$form_state) {
+  $filters = array();
+  $filters['num'] = array(
+    'pattern' => "/^\d+$/",
+    'message' => 'You can use only digits.',
+  );
+  $filters['word'] = array(
+    'pattern' => "/^([a-zA-ZăîşșţțâĂÎŞȘŢȚÂА-я\-\.\s\:\;\,\('\)\d]*)$/u",
+    'message' => 'You can use letters, digits and punctuation characters.',
+  );
+  $filters['phone'] = array(
+    'pattern' => "/^([\d\s\(\)\-\+]+)$/",
+    'message' => 'You can use only digits, space and characters +, -, (, ).',
+  );
+  $filters['money'] = array(
+    'pattern' => "/^[\-]?([\d]){1,15}([\.\,]?[\d]{1,2})?$/",
+    'message' => 'Please, enter a valid money value.',
+  );
+  $filters['email'] = array(
+    'pattern' => "/^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,3})$/",
+    'message' => 'Please, enter a valid e-mail.',
+  );
+  $filters['datetime'] = array(
+    'pattern' => "/^\d{4}-\d{1,2}-\d{1,2}(?: \d{1,2}(:\d{1,2}(:\d{1,2})?)?)?$/",
+    'message' => 'Please, enter a valid date and time.',
+  );
+  $filters['date'] = array(
+    'pattern' => "/^\d{4}-\d{1,2}-\d{1,2}$/",
+    'message' => 'Please, enter a valid date.',
+  );
+  $filters['cod_fiscal'] = array(
+    'pattern' => "/^(\d{5}|\d{13})$/",
+    'message' => 'You can use only 13 digits.',
+  );
+  $filters['cont_bancar'] = array(
+    'pattern' => "/^[[:alnum:]]{9,21}$/",
+    'message' => 'You can use up to 21 characters.',
+  );
+
+  if ((!isset($element['#value']) || !strlen($element['#value'])) && !$element['#required']) {
+    return $element;
+  }
+  if (
+    ((!isset($element['#value']) || strlen($element['#value']) == 0) && $element['#required']) ||
+    ($element['#filter'] &&
+    array_key_exists($element['#filter'], $filters) &&
+    !preg_match($filters[$element['#filter']]['pattern'], $element['#value'])
+    )
+  ) {
+    form_set_error($element['#name'], t($filters[$element['#filter']]['message']));
+  }
+
+  return $element;
+}
+
+function maskedinput_format_func($basename, $value, $direction = CONVERT_FORWARD) {
+  if (!$basename) {
+    return $value;
+  }
+  $function_name = 'maskedinput_convert_' . $basename . ($direction == CONVERT_REVERSE ? '_rev' : '_fwd');
+  if (function_exists($function_name)) {
+    return $function_name($value);
+  }
+  return $value;
+}
+
+function maskedinput_convert_money_fix_rev($money_str) {
+  return strtr($money_str, ',', '.');
+}
+
+function maskedinput_convert_date_dmy_rev($date_str) {
+  $date = strptime($date_str, '%d/%m/%Y');
+  if ($date) {
+    return ($date['tm_year'] + 1900) . '-' .
+      str_pad($date['tm_mon'] + 1, 2, '0', STR_PAD_LEFT) . '-' .
+      str_pad($date['tm_mday'], 2, '0', STR_PAD_LEFT);
+  }
+  elseif (is_array($date_str)) {
+    return $date_str['year'] . '-' . $date_str['month'] . '-' . $date_str['day'];
+  }
+}
+
+function maskedinput_convert_date_dmy_fwd($date_int) {
+  if (is_numeric($date_int) && $date_int > 0) {
+    $date = getdate($date_int);
+    return str_pad($date['mday'], 2, '0', STR_PAD_LEFT) . '/' . str_pad($date['mon'], 2, '0', STR_PAD_LEFT) . '/' . $date['year'];
+  }
+  elseif ($date = strptime($date_int, '%F')) {
+    return str_pad($date['tm_mday'], 2, '0', STR_PAD_LEFT) . '/' . str_pad(($date['tm_mon'] + 1), 2, '0', STR_PAD_LEFT) . '/' . ($date['tm_year'] + 1900);
+  }
+}
+
+function maskedinput_convert_date_dmyhi_rev($date_str) {
+  $date = strptime($date_str, '%d/%m/%Y %H:%M');
+  if ($date) {
+    return ($date['tm_year'] + 1900) . '-' . ($date['tm_mon'] + 1) . '-' . $date['tm_mday'] . ' ' . $date['tm_hour'] . ':' . $date['tm_min'];
+  }
+  elseif (is_array($date_str)) {
+    return $date_str['year'] . '-' . $date_str['month'] . '-' . $date_str['day'];
+  }
+}
+
+function maskedinput_convert_date_dmyhi_fwd($date_int) {
+  if (is_numeric($date_int) && $date_int > 0) {
+    $date = getdate($date_int);
+    return str_pad($date['mday'], 2, '0', STR_PAD_LEFT) . '/' .
+      str_pad($date['mon'], 2, '0', STR_PAD_LEFT) . '/' .
+      $date['year'] . ' ' .
+      str_pad($date['hours'], 2, '0', STR_PAD_LEFT) . ':' .
+      str_pad($date['minutes'], 2, '0', STR_PAD_LEFT);
+  }
+  elseif ($date = strptime($date_int, '%F %R')) {
+    return str_pad($date['tm_mday'], 2, '0', STR_PAD_LEFT) . '/' .
+      str_pad(($date['tm_mon'] + 1), 2, '0', STR_PAD_LEFT) . '/' .
+      ($date['tm_year'] + 1900) . ' ' .
+      str_pad($date['tm_hour'], 2, '0', STR_PAD_LEFT) . ':' .
+      str_pad($date['tm_min'], 2, '0', STR_PAD_LEFT);
+  }
+}
+
+function maskedinput_convert_timestamp_dmy_rev($date_str) {
+  $date = strptime($date_str, '%d/%m/%Y');
+  if ($date) {
+    return mktime($date['tm_hour'], $date['tm_min'], $date['tm_sec'], $date['tm_mon'] + 1, $date['tm_mday'], $date['tm_year'] + 1900);
+  }
+  elseif (is_array($date_str)) {
+    return mktime(3, 0, 0, $date_str['month'], $date_str['day'], $date_str['year']);
+  }
+}
+
+function maskedinput_convert_timestamp_dmy_fwd($date_int) {
+  if (is_numeric($date_int)) {
+    $date = getdate($date_int);
+    return str_pad($date['mday'], 2, '0', STR_PAD_LEFT) . '/' . str_pad($date['mon'], 2, '0', STR_PAD_LEFT) . '/' . $date['year'];
+  }
+  elseif ($time = strtotime($date_int)) {
+    $date = getdate($time);
+    return str_pad($date['mday'], 2, '0', STR_PAD_LEFT) . '/' . str_pad($date['mon'], 2, '0', STR_PAD_LEFT) . '/' . $date['year'];
+  }
+}
+
+/**
+ * Implementation of form_type_hook_value().
+ */
+function form_type_maskedinput_value($element, $edit, $form_state) {
+  if ($edit === FALSE) {
+    return $element['#default_value'];
+  }
+  elseif ($edit) {
+    if (!_maskedinput_validate($element['#mask'], $edit)) {
+      form_set_error(end($element['#parents']), t($element['#validate_message'] ? $element['#validate_message'] : 'The value does not match requested format.'));
+    }
+    $ret = maskedinput_format_func($element['#convert_format'], $edit, CONVERT_REVERSE);
+    return $ret;
+  }
+}
+
+/**
+ * Implementation of hook_theme().
+ *
+ * This lets us tell Drupal about our theme functions and their arguments.
+ */
+function maskedinput_theme() {
+  $data['maskedinput'] = array(
+    'render element' => 'element',
+  );
+
+  return $data;
+}
+
+
+function _maskedinput_datepicker_js() {
+  static $init = 0;
+
+  if (!$init) {
+    $init = 1;
+    drupal_add_library('system', 'ui.datepicker');
+
+    $path = drupal_get_path('module', 'maskedinput');
+    drupal_add_js("{$path}/js/datepicker_init.js");
+  }
+}
+
+/*
+ * function for_maskedinput_form_alter
+ */
+function _maskedinput_search_type_maskedinput(&$form) {
+  foreach (element_children($form) as $key) {
+    if(isset($form[$key]['#type'])) {
+      if($form[$key]['#type'] == 'maskedinput' && isset($form[$key]["#convert_format"])) {
+        switch ($form[$key]["#convert_format"]) {
+          case "date_dmy" :
+          case "timestamp_dmy" :
+          $form[$key]['#description'] = t('Format: dd/mm/YYYY');
+            if (empty($form[$key]['#attributes']['readonly'])) {
+              $form[$key]['#attributes']['class'][] = 'datepicker';
+              _maskedinput_datepicker_js();
+            }
+            break;
+          case "date_dmyhi" :
+            $form[$key]['#description'] = t('Format: dd/mm/YYYY HH:MM');
+            break;
+        }
+      }
+    }
+  }
+}
+
+function maskedinput_form_alter(&$form, &$form_state, $form_id) {
+  _maskedinput_search_type_maskedinput($form);
+}
+
+/**
+ * Theme function to format the output of maskedinput form element type.
+ *
+ */
+function theme_maskedinput($variables) {
+  static $configs = array();
+  $element = $variables['element'];
+  $output = '';
+  maskedinput_js_load();
+
+  if (!empty($element['#mask']) && !empty($element['#id'])) {
+    $config = $element['#mask'];
+
+    $config_key = array_search($config, $configs);
+    if ($config_key === FALSE) {
+      $configs[] = $config;
+      $config_key = count($configs) - 1;
+      drupal_add_js(array('maskedinput' => array($config_key => $config)), 'setting');
+    }
+  }
+
+  $element['#attributes']['type'] = 'text';
+
+  element_set_attributes($element, array('id', 'name', 'value', 'size', 'maxlength'));
+  _form_set_class($element, array('form-text'));
+
+  $extra = '';
+  if ($element['#autocomplete_path'] && drupal_valid_path($element['#autocomplete_path'])) {
+    drupal_add_library('system', 'drupal.autocomplete');
+    $element['#attributes']['class'][] = 'form-autocomplete';
+
+    $attributes = array();
+    $attributes['type'] = 'hidden';
+    $attributes['id'] = $element['#attributes']['id'] . '-autocomplete';
+    $attributes['value'] = url($element['#autocomplete_path'], array('absolute' => TRUE));
+    $attributes['disabled'] = 'disabled';
+    $attributes['class'][] = 'autocomplete';
+    $extra = '<input' . drupal_attributes($attributes) . ' />';
+  }
+
+  if(!empty($element['#convert_format'])) {
+    $value = maskedinput_format_func($element['#convert_format'], $element['#value'], CONVERT_FORWARD);
+  }
+  else {
+    $value = $element['#value'];
+  }
+
+  $element['#attributes']['value'] = check_plain($value);
+  $element['#attributes']['class'][] = 'maskedinput';
+
+  if(is_numeric($config_key)) {
+    $element['#attributes']['alt'] = $config_key;
+  }
+
+  if (isset($element['#field_prefix'])) {
+    $output .= '<span class="field-prefix">' . $element['#field_prefix'] . '</span> ';
+  }
+
+  $output = '<input' . drupal_attributes($element['#attributes']) . ' />';
+
+  if (isset($element['#field_suffix'])) {
+    $output .= ' <span class="field-suffix">' . $element['#field_suffix'] . '</span>';
+  }
+
+  return $output . $extra;
+}
+
