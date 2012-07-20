@@ -25,12 +25,17 @@ function maskedinput_element_info() {
     '#mask' => NULL,
     '#convert_format' => NULL, //basename of function callbacks to convert input value to/from something expected, like datetime_dmy for maskedinput_convert_datetime_dmy_rev and maskedinput_convert_datetime_dmy_fwd
     '#element_validate' => array('maskedinput_validate'),
-    '#validate_message' => 'Value does not match requested format.', // Message shown if format is not respected
+    '#validate_message' => 'Value does not match required format of field %title.', // Available variables %name, %title
     '#filter' => NULL,  // one of { 'num', 'money', 'word', 'phone', 'email', 'date', 'datetime' } used to RegExp validate input value
     '#theme' => array('maskedinput'),
     '#theme_wrappers' => array('form_element'),
     '#default_value' => NULL,
     '#autocomplete_path' => NULL,
+    '#size' => 60,
+    '#maxlength' => 128,
+    '#process' => array('ajax_process_form'),
+    '#placeholder' => '_',
+    '#error_title' => NULL, //Title which need to display on error
   );
 
   return $types;
@@ -44,15 +49,23 @@ function _maskedinput_validate($mask, $value) {
   $mask_list = array(
     '9' => "[[:digit:]]",
     'a' => "[[:alpha:]]",
-    '*' => "[[:alnum:].,/\ ]"
+    '*' => "[[:alnum:].,/\ ]",
+    '8' => "[[:digit:]]",
   );
 
   if (isset($value) && strlen($value) && $mask) {
     $regexp = '&^' . strtr($mask, $mask_list) . '$&';
-    if (!preg_match($regexp, $value)) {
+    if(strpos($mask, '8') !== FALSE) {
+      $pattern = "/^\d+$/";
+      if(!preg_match($pattern, $value)) {
+        return FALSE;
+      }
+    }
+    else if (!preg_match($regexp, $value)) {
       return FALSE;
     }
   }
+
   return TRUE;
 }
 
@@ -63,39 +76,39 @@ function maskedinput_validate($element, $form, &$form_state) {
   $filters = array();
   $filters['num'] = array(
     'pattern' => "/^\d+$/",
-    'message' => 'You can use only digits.',
+    'message' => 'You can use only digits of field %title.',
   );
   $filters['word'] = array(
     'pattern' => "/^([a-zA-ZăîşșţțâĂÎŞȘŢȚÂА-я\-\.\s\:\;\,\('\)\d]*)$/u",
-    'message' => 'You can use letters, digits and punctuation characters.',
+    'message' => 'You can use letters, digits and punctuation characters of field %title.',
   );
   $filters['phone'] = array(
     'pattern' => "/^([\d\s\(\)\-\+]+)$/",
-    'message' => 'You can use only digits, space and characters +, -, (, ).',
+    'message' => 'You can use only digits, space and characters +, -, (, ) of field %title.',
   );
   $filters['money'] = array(
     'pattern' => "/^[\-]?([\d]){1,15}([\.\,]?[\d]{1,2})?$/",
-    'message' => 'Please, enter a valid money value.',
+    'message' => 'Please, enter a valid money value of field %title.',
   );
   $filters['email'] = array(
     'pattern' => "/^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,3})$/",
-    'message' => 'Please, enter a valid e-mail.',
+    'message' => 'Please, enter a valid e-mail of field %title.',
   );
   $filters['datetime'] = array(
     'pattern' => "/^\d{4}-\d{1,2}-\d{1,2}(?: \d{1,2}(:\d{1,2}(:\d{1,2})?)?)?$/",
-    'message' => 'Please, enter a valid date and time.',
+    'message' => 'Please, enter a valid date and time of field %title.',
   );
   $filters['date'] = array(
     'pattern' => "/^\d{4}-\d{1,2}-\d{1,2}$/",
-    'message' => 'Please, enter a valid date.',
+    'message' => 'Please, enter a valid date of field %title.',
   );
   $filters['cod_fiscal'] = array(
     'pattern' => "/^(\d{5}|\d{13})$/",
-    'message' => 'You can use only 13 digits.',
+    'message' => 'You can use only 13 digits of field %title.',
   );
   $filters['cont_bancar'] = array(
     'pattern' => "/^[[:alnum:]]{9,21}$/",
-    'message' => 'You can use up to 21 characters.',
+    'message' => 'You can use up to 21 characters of field %title.',
   );
 
   if ((!isset($element['#value']) || !strlen($element['#value'])) && !$element['#required']) {
@@ -108,7 +121,16 @@ function maskedinput_validate($element, $form, &$form_state) {
     !preg_match($filters[$element['#filter']]['pattern'], $element['#value'])
     )
   ) {
-    form_set_error($element['#name'], t($filters[$element['#filter']]['message']));
+    $attr = array(
+      '%name' => $element['#name'],
+      '%title' => $element['#title']
+    );
+
+    if(!empty($element['#error_title'])) {
+      $attr['%title'] = $element['#error_title'];
+    }
+
+    form_set_error($element['#name'], t($filters[$element['#filter']]['message'], $attr));
   }
 
   return $element;
@@ -208,8 +230,17 @@ function form_type_maskedinput_value($element, $edit, $form_state) {
     return $element['#default_value'];
   }
   elseif ($edit) {
-    if (!_maskedinput_validate($element['#mask'], $edit)) {
-      form_set_error(end($element['#parents']), t($element['#validate_message'] ? $element['#validate_message'] : 'The value does not match requested format.'));
+    if(!_maskedinput_validate($element['#mask'], $edit)) {
+      $attr = array(
+        '%name' => $element['#name'],
+        '%title' => $element['#title']
+      );
+
+      if(!empty($element['#error_title'])) {
+        $attr['%title'] = $element['#error_title'];
+      }
+
+      form_set_error(end($element['#parents']), t($element['#validate_message'], $attr));
     }
     $ret = maskedinput_format_func($element['#convert_format'], $edit, CONVERT_REVERSE);
     return $ret;
@@ -294,7 +325,7 @@ function theme_maskedinput($variables) {
 
   $element['#attributes']['type'] = 'text';
 
-  element_set_attributes($element, array('id', 'name', 'value', 'size', 'maxlength'));
+  element_set_attributes($element, array('id', 'name', 'value', 'size', 'maxlength', 'placeholder'));
   _form_set_class($element, array('form-text'));
 
   $extra = '';
@@ -321,8 +352,10 @@ function theme_maskedinput($variables) {
   $element['#attributes']['value'] = check_plain($value);
   $element['#attributes']['class'][] = 'maskedinput';
 
-  if(is_numeric($config_key)) {
-    $element['#attributes']['alt'] = $config_key;
+  if(isset($config_key)) {
+    if(is_numeric($config_key)) {
+      $element['#attributes']['alt'] = $config_key;
+    }
   }
 
   if (isset($element['#field_prefix'])) {
