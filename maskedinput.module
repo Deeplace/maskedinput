@@ -363,11 +363,7 @@ function theme_maskedinput($variables) {
   }
 
   $output = '<input' . drupal_attributes($element['#attributes']) . ' />';
-
-  if (isset($element['#field_suffix'])) {
-    $output .= ' <span class="field-suffix">' . $element['#field_suffix'] . '</span>';
-  }
-
+  
   return $output . $extra;
 }
 
